@@ -18,6 +18,7 @@ This trainer supports model-agonistic model initialization with huggingface
 
 import os
 import uuid
+import random
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
@@ -322,6 +323,8 @@ class RayPPOTrainer(object):
         self.use_reference_policy = Role.RefPolicy in role_worker_mapping
         self.use_rm = Role.RewardModel in role_worker_mapping
         self.ray_worker_group_cls = ray_worker_group_cls
+        
+        self.random_seed = config.data.get('random_seed', 0)
 
         # define KL control
         if self.use_reference_policy:
@@ -339,10 +342,25 @@ class RayPPOTrainer(object):
 
         self._create_dataloader()
 
+    def _set_all_seeds(self):
+        random.seed(self.random_seed)
+        np.random.seed(self.random_seed)
+        torch.manual_seed(self.random_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(self.random_seed)
+            torch.cuda.manual_seed_all(self.random_seed)  # if you are using multi-GPU
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+        from transformers import set_seed
+        set_seed(self.random_seed)
+
     def _create_dataloader(self):
         from torch.utils.data import DataLoader
         # TODO: we have to make sure the batch size is divisible by the dp size
         from verl.utils.dataset.rl_dataset import RLHFDataset, collate_fn
+        
+        self._set_all_seeds()
+    
         self.train_dataset = RLHFDataset(parquet_files=self.config.data.train_files,
                                          tokenizer=self.tokenizer,
                                          prompt_key=self.config.data.prompt_key,
